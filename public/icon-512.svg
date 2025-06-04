@@ -1,0 +1,52 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background with gradient -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#8b5cf6;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="256" fill="url(#bg)"/>
+  
+  <!-- Stock chart background -->
+  <rect x="100" y="180" width="312" height="200" rx="12" fill="rgba(255,255,255,0.1)"/>
+  
+  <!-- Grid lines -->
+  <line x1="120" y1="200" x2="392" y2="200" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <line x1="120" y1="240" x2="392" y2="240" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <line x1="120" y1="280" x2="392" y2="280" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <line x1="120" y1="320" x2="392" y2="320" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  <line x1="120" y1="360" x2="392" y2="360" stroke="rgba(255,255,255,0.2)" stroke-width="1"/>
+  
+  <!-- Main trend line -->
+  <path d="M120 320 L160 280 L200 300 L240 240 L280 260 L320 200 L360 220 L392 180" 
+        stroke="white" stroke-width="6" fill="none" stroke-linecap="round"/>
+  
+  <!-- Area under curve -->
+  <path d="M120 320 L160 280 L200 300 L240 240 L280 260 L320 200 L360 220 L392 180 L392 360 L120 360 Z" 
+        fill="url(#accent)" opacity="0.3"/>
+  
+  <!-- Data points -->
+  <circle cx="160" cy="280" r="5" fill="white"/>
+  <circle cx="240" cy="240" r="5" fill="white"/>
+  <circle cx="320" cy="200" r="5" fill="url(#accent)"/>
+  <circle cx="392" cy="180" r="6" fill="url(#accent)"/>
+  
+  <!-- Trending up arrow -->
+  <path d="M350 180 L380 180 L380 210 M350 180 L380 210" 
+        stroke="url(#accent)" stroke-width="6" fill="none" stroke-linecap="round"/>
+  
+  <!-- Title -->
+  <text x="256" y="140" text-anchor="middle" font-family="Arial, sans-serif" 
+        font-size="36" font-weight="bold" fill="white">BehindTheTick</text>
+  
+  <!-- Subtitle -->
+  <text x="256" y="420" text-anchor="middle" font-family="Arial, sans-serif" 
+        font-size="20" fill="rgba(255,255,255,0.8)">Insider Trading Tracker</text>
+</svg>

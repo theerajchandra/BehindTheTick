@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BehindTheTick - Offline</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+      color: white;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .container {
+      text-align: center;
+      max-width: 500px;
+      background: rgba(31, 41, 55, 0.8);
+      padding: 3rem 2rem;
+      border-radius: 20px;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(75, 85, 99, 0.3);
+    }
+
+    .icon {
+      width: 80px;
+      height: 80px;
+      margin: 0 auto 2rem;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 800;
+      margin-bottom: 1rem;
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    p {
+      color: #d1d5db;
+      line-height: 1.6;
+      margin-bottom: 2rem;
+    }
+
+    .features {
+      text-align: left;
+      margin-bottom: 2rem;
+    }
+
+    .features h3 {
+      font-size: 1.2rem;
+      margin-bottom: 1rem;
+      color: white;
+    }
+
+    .features ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    .features li {
+      padding: 0.5rem 0;
+      color: #d1d5db;
+      display: flex;
+      align-items: center;
+    }
+
+    .features li:before {
+      content: "✓";
+      color: #10b981;
+      font-weight: bold;
+      margin-right: 0.5rem;
+    }
+
+    .retry-btn {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+      margin-top: 1rem;
+    }
+
+    .retry-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 25px rgba(59, 130, 246, 0.3);
+    }
+
+    .status {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+    }
+
+    .status.online {
+      background: rgba(16, 185, 129, 0.2);
+      color: #10b981;
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+
+    .status.offline {
+      background: rgba(239, 68, 68, 0.2);
+      color: #ef4444;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    @media (max-width: 640px) {
+      .container {
+        padding: 2rem 1.5rem;
+      }
+      
+      h1 {
+        font-size: 1.5rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      📊
+    </div>
+    
+    <h1>You're Offline</h1>
+    <p>Don't worry! You can still access some features of BehindTheTick while offline.</p>
+    
+    <div class="features">
+      <h3>Available Offline:</h3>
+      <ul>
+        <li>View previously loaded profiles</li>
+        <li>Browse cached trading data</li>
+        <li>Access saved watchlist</li>
+        <li>Review recent insights</li>
+      </ul>
+    </div>
+    
+    <div id="connection-status" class="status offline">
+      ⚡ Currently offline - Limited functionality
+    </div>
+    
+    <button onclick="checkConnection()" class="retry-btn">
+      Check Connection
+    </button>
+  </div>
+
+  <script>
+    function updateConnectionStatus() {
+      const status = document.getElementById('connection-status');
+      if (navigator.onLine) {
+        status.className = 'status online';
+        status.innerHTML = '🟢 Back online - Redirecting...';
+        setTimeout(() => {
+          window.location.href = '/';
+        }, 1500);
+      } else {
+        status.className = 'status offline';
+        status.innerHTML = '⚡ Currently offline - Limited functionality';
+      }
+    }
+
+    function checkConnection() {
+      updateConnectionStatus();
+      
+      // Also try to fetch from the main site
+      fetch('/', { method: 'HEAD', cache: 'no-cache' })
+        .then(() => {
+          window.location.href = '/';
+        })
+        .catch(() => {
+          // Still offline
+          console.log('Still offline');
+        });
+    }
+
+    // Listen for online/offline events
+    window.addEventListener('online', updateConnectionStatus);
+    window.addEventListener('offline', updateConnectionStatus);
+
+    // Check connection status on load
+    updateConnectionStatus();
+
+    // Auto-retry connection every 30 seconds
+    setInterval(() => {
+      if (navigator.onLine) {
+        fetch('/', { method: 'HEAD', cache: 'no-cache' })
+          .then(() => {
+            window.location.href = '/';
+          })
+          .catch(() => {
+            // Still offline
+          });
+      }
+    }, 30000);
+  </script>
+</body>
+</html>
