@@ -6,6 +6,8 @@ import { usePathname } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
 import { ThemeToggle } from './ThemeToggle';
 import LoginModal from './LoginModal';
+import SyncStatus from './SyncStatus';
+import NotificationCenter from './NotificationCenter';
 import { cn } from '@/utils';
 import { Eye, User, Star, LogOut, Settings, Menu, X } from 'lucide-react';
 
@@ -74,6 +76,12 @@ export function Navigation() {
 
             {/* Right Side Actions */}
             <div className="flex items-center space-x-4">
+              {/* Sync Status */}
+              {user && <SyncStatus />}
+              
+              {/* Notification Center */}
+              {user && <NotificationCenter />}
+              
               <ThemeToggle />
               
               {/* User Menu */}

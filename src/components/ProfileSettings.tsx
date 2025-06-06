@@ -30,7 +30,7 @@ interface NotificationSettings {
   priceAlerts: boolean;
   news: boolean;
   marketing: boolean;
-  frequency: 'instant' | 'daily' | 'weekly';
+  frequency: 'immediate' | 'daily' | 'weekly';
 }
 
 interface PrivacySettings {
@@ -105,14 +105,49 @@ export default function ProfileSettings() {
     if (!user) return;
     
     try {
-      const preferences = await dbManager.getUserPreferences(user.id);
-      if (preferences) {
-        setNotificationSettings(preferences.notifications || notificationSettings);
-        setPrivacySettings(preferences.privacy || privacySettings);
-        setDisplaySettings(preferences.display || displaySettings);
+      // First try to load from API
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/user/settings', {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const settings = data.settings;
+        
+        if (settings) {
+          setProfileData(prev => ({
+            ...prev,
+            ...settings.profile
+          }));
+          setNotificationSettings(settings.notifications || notificationSettings);
+          setPrivacySettings(settings.privacy || privacySettings);
+          setDisplaySettings(settings.display || displaySettings);
+        }
+      } else {
+        // Fallback to IndexedDB
+        const preferences = await dbManager.getUserPreferences(user.id);
+        if (preferences) {
+          setNotificationSettings(preferences.notifications || notificationSettings);
+          setPrivacySettings(preferences.privacy || privacySettings);
+          setDisplaySettings(preferences.display || displaySettings);
+        }
       }
     } catch (error) {
       console.error('Failed to load user preferences:', error);
+      // Fallback to IndexedDB on error
+      try {
+        const preferences = await dbManager.getUserPreferences(user.id);
+        if (preferences) {
+          setNotificationSettings(preferences.notifications || notificationSettings);
+          setPrivacySettings(preferences.privacy || privacySettings);
+          setDisplaySettings(preferences.display || displaySettings);
+        }
+      } catch (dbError) {
+        console.error('Failed to load from IndexedDB:', dbError);
+      }
     }
   };
 
@@ -122,27 +157,59 @@ export default function ProfileSettings() {
     setIsLoading(true);
     try {
       const preferences = {
+        profile: profileData,
         notifications: notificationSettings,
         privacy: privacySettings,
         display: displaySettings,
         lastUpdated: new Date().toISOString()
       };
       
-      await dbManager.setUserPreferences(user.id, preferences);
-      
-      // Also update the auth context
-      await updateProfile({
-        preferences: {
-          ...user.preferences,
-          ...preferences
-        }
+      // Save to API first
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/user/settings', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(preferences)
       });
+
+      if (response.ok) {
+        // Also save to IndexedDB for offline access
+        await dbManager.setUserPreferences(user.id, preferences);
+        
+        // Update the auth context
+        await updateProfile({
+          preferences: {
+            ...user.preferences,
+            ...preferences
+          }
+        });
+        
+        setSaveMessage('Settings saved successfully!');
+      } else {
+        const error = await response.json();
+        setSaveMessage(error.error || 'Failed to save settings. Please try again.');
+      }
       
-      setSaveMessage('Settings saved successfully!');
       setTimeout(() => setSaveMessage(''), 3000);
     } catch (error) {
       console.error('Failed to save preferences:', error);
-      setSaveMessage('Failed to save settings. Please try again.');
+      
+      // Fallback to local storage
+      try {
+        await dbManager.setUserPreferences(user.id, {
+          notifications: notificationSettings,
+          privacy: privacySettings,
+          display: displaySettings,
+          lastUpdated: new Date().toISOString()
+        });
+        setSaveMessage('Settings saved locally (offline mode)');
+      } catch (dbError) {
+        setSaveMessage('Failed to save settings. Please try again.');
+      }
+      
       setTimeout(() => setSaveMessage(''), 3000);
     } finally {
       setIsLoading(false);
@@ -163,30 +230,86 @@ export default function ProfileSettings() {
     if (!user) return;
     
     try {
-      const watchlist = await dbManager.getWatchlist(user.id);
-      const preferences = await dbManager.getUserPreferences(user.id);
-      
-      const exportData = {
-        profile: profileData,
-        preferences,
-        watchlist,
-        exportDate: new Date().toISOString()
-      };
-      
-      const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-        type: 'application/json'
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch('/api/user/export', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          format: 'json',
+          includeWatchlist: true,
+          includePreferences: true,
+          includeActivity: false
+        })
       });
-      
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `behindthetick-data-${user.id}-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `behindthetick-data-${user.id}-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        // Fallback to local data export
+        const watchlist = await dbManager.getWatchlist(user.id);
+        const preferences = await dbManager.getUserPreferences(user.id);
+        
+        const exportData = {
+          profile: profileData,
+          preferences,
+          watchlist,
+          exportDate: new Date().toISOString()
+        };
+        
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+          type: 'application/json'
+        });
+        
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `behindthetick-data-${user.id}-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
     } catch (error) {
       console.error('Failed to export data:', error);
+      
+      // Fallback to local data export
+      try {
+        const watchlist = await dbManager.getWatchlist(user.id);
+        const preferences = await dbManager.getUserPreferences(user.id);
+        
+        const exportData = {
+          profile: profileData,
+          preferences,
+          watchlist,
+          exportDate: new Date().toISOString()
+        };
+        
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+          type: 'application/json'
+        });
+        
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `behindthetick-data-${user.id}-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch (fallbackError) {
+        console.error('Failed to export data locally:', fallbackError);
+      }
     }
   };
 
@@ -198,19 +321,54 @@ export default function ProfileSettings() {
     );
     
     if (confirmed) {
+      const password = window.prompt('Please enter your password to confirm account deletion:');
+      if (!password) return;
+      
+      const reason = window.prompt('Optional: Please tell us why you\'re deleting your account (this helps us improve):') || 'No reason provided';
+      
       try {
-        // Clear local data
-        await dbManager.clearExpiredCache(0); // Clear all cache
-        localStorage.clear();
-        sessionStorage.clear();
-        
-        // Log out user
-        logout();
-        
-        // In a real app, you would also call an API to delete the account
-        // await fetch('/api/auth/delete-account', { method: 'DELETE' });
+        const token = localStorage.getItem('auth_token');
+        const response = await fetch('/api/user/delete-account', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+          },
+          body: JSON.stringify({
+            password,
+            reason,
+            confirmDeletion: true
+          })
+        });
+
+        if (response.ok) {
+          // Clear local data
+          await dbManager.clearExpiredCache(0); // Clear all cache
+          localStorage.clear();
+          sessionStorage.clear();
+          
+          // Log out user
+          logout();
+          
+          alert('Your account has been successfully deleted. We\'re sorry to see you go!');
+        } else {
+          const error = await response.json();
+          alert(error.error || 'Failed to delete account. Please try again or contact support.');
+        }
       } catch (error) {
         console.error('Failed to delete account:', error);
+        
+        // Fallback - just clear local data and log out
+        try {
+          await dbManager.clearExpiredCache(0);
+          localStorage.clear();
+          sessionStorage.clear();
+          logout();
+        } catch (cleanupError) {
+          console.error('Failed to cleanup local data:', cleanupError);
+        }
+        
+        alert('There was an error deleting your account. Please contact support for assistance.');
       }
     }
   };
@@ -431,11 +589,11 @@ export default function ProfileSettings() {
                       value={notificationSettings.frequency}
                       onChange={(e) => setNotificationSettings(prev => ({ 
                         ...prev, 
-                        frequency: e.target.value as 'instant' | 'daily' | 'weekly'
+                        frequency: e.target.value as 'immediate' | 'daily' | 'weekly'
                       }))}
                       className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white"
                     >
-                      <option value="instant">Instant</option>
+                      <option value="immediate">Immediate</option>
                       <option value="daily">Daily Digest</option>
                       <option value="weekly">Weekly Summary</option>
                     </select>

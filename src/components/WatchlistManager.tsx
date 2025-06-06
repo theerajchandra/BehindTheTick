@@ -68,6 +68,21 @@ export default function WatchlistManager() {
     }));
   });
 
+  // Check network status
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    
+    setIsOffline(!navigator.onLine);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   useEffect(() => {
     if (user?.preferences.watchlist) {
       loadWatchlistData();
@@ -75,28 +90,81 @@ export default function WatchlistManager() {
   }, [user]);
 
   const loadWatchlistData = async () => {
-    if (!user?.preferences.watchlist) return;
+    if (!user) return;
     
     setIsLoading(true);
     try {
+      // Try to load from IndexedDB first (for offline support)
+      const cachedWatchlist = await dbManager.getWatchlist(user.id);
+      
+      if (cachedWatchlist.length > 0 && isOffline) {
+        // Use cached data when offline
+        setWatchlistItems(cachedWatchlist.map(item => ({
+          symbol: item.symbol,
+          name: item.name,
+          price: item.price || 0,
+          change: item.change || 0,
+          changePercent: item.changePercent || 0,
+          politician: item.politician,
+          lastTradeDate: item.lastTradeDate,
+          alertEnabled: item.alertEnabled || false,
+          alertThreshold: item.alertThreshold || 5
+        })));
+        setIsLoading(false);
+        return;
+      }
+
       // Fetch current price data for watchlist symbols
-      const promises = user.preferences.watchlist.map(async (symbol) => {
-        const response = await fetch(`/api/market?symbol=${symbol}`);
-        const data = await response.json();
-        
-        if (data.success && data.data.length > 0) {
-          const marketData = data.data[0];
-          return {
-            symbol,
-            name: marketData.name || symbol,
-            price: marketData.price,
-            change: marketData.change,
-            changePercent: marketData.changePercent,
-            politician: marketData.politician,
-            lastTradeDate: marketData.lastTradeDate,
-            alertEnabled: false,
-            alertThreshold: 5 // Default 5% threshold
-          };
+      const watchlistSymbols = user.preferences.watchlist || [];
+      const promises = watchlistSymbols.map(async (symbol) => {
+        try {
+          const response = await fetch(`/api/market?symbol=${symbol}`);
+          const data = await response.json();
+          
+          if (data.success && data.data.length > 0) {
+            const marketData = data.data[0];
+            const watchlistItem = {
+              symbol,
+              name: marketData.name || symbol,
+              price: marketData.price,
+              change: marketData.change,
+              changePercent: marketData.changePercent,
+              politician: marketData.politician,
+              lastTradeDate: marketData.lastTradeDate,
+              alertEnabled: false,
+              alertThreshold: 5 // Default 5% threshold
+            };
+
+            // Cache in IndexedDB
+            await dbManager.addToWatchlist({
+              symbol,
+              userId: user.id,
+              name: marketData.name || symbol,
+              price: marketData.price,
+              change: marketData.change,
+              dateAdded: new Date().toISOString(),
+              notes: `Added by ${user.name || user.email}`
+            });
+
+            return watchlistItem;
+          }
+        } catch (error) {
+          console.error(`Error fetching data for ${symbol}:`, error);
+          // Try to get from cache if API fails
+          const cached = cachedWatchlist.find(item => item.symbol === symbol);
+          if (cached) {
+            return {
+              symbol,
+              name: cached.name,
+              price: cached.price || 0,
+              change: cached.change || 0,
+              changePercent: 0,
+              politician: cached.politician,
+              lastTradeDate: cached.lastTradeDate,
+              alertEnabled: cached.alertEnabled || false,
+              alertThreshold: cached.alertThreshold || 5
+            };
+          }
         }
         
         return null;
@@ -107,6 +175,25 @@ export default function WatchlistManager() {
       
     } catch (error) {
       console.error('Error loading watchlist data:', error);
+      // Try to load from cache as fallback
+      try {
+        const cachedWatchlist = await dbManager.getWatchlist(user?.id);
+        if (cachedWatchlist.length > 0) {
+          setWatchlistItems(cachedWatchlist.map(item => ({
+            symbol: item.symbol,
+            name: item.name,
+            price: item.price || 0,
+            change: item.change || 0,
+            changePercent: 0,
+            politician: item.politician,
+            lastTradeDate: item.lastTradeDate,
+            alertEnabled: item.alertEnabled || false,
+            alertThreshold: item.alertThreshold || 5
+          })));
+        }
+      } catch (cacheError) {
+        console.error('Error loading from cache:', cacheError);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -157,19 +244,61 @@ export default function WatchlistManager() {
     const updatedWatchlist = [...user.preferences.watchlist, symbol];
     
     try {
-      const result = await updateProfile({
-        preferences: {
-          ...user.preferences,
-          watchlist: updatedWatchlist
-        }
+      // Add to IndexedDB immediately for offline support
+      await dbManager.addToWatchlist({
+        symbol,
+        userId: user.id,
+        name: symbol, // Will be updated when we fetch market data
+        dateAdded: new Date().toISOString(),
+        notes: `Added by ${user.name || user.email}`
       });
 
-      if (result.success) {
-        loadWatchlistData();
-        setShowAddModal(false);
-        setSearchQuery('');
-        setSearchResults([]);
+      // If online, update server and reload data
+      if (!isOffline) {
+        const result = await updateProfile({
+          preferences: {
+            ...user.preferences,
+            watchlist: updatedWatchlist
+          }
+        });
+
+        if (result.success) {
+          loadWatchlistData(); // This will also update IndexedDB cache
+        } else {
+          // If server update fails, still show the item but mark for sync
+          await dbManager.queueOfflineAction({
+            type: 'add_watchlist',
+            data: { symbol, userId: user.id },
+            endpoint: '/api/profile',
+            method: 'PUT'
+          });
+        }
+      } else {
+        // When offline, queue the action for later sync
+        await dbManager.queueOfflineAction({
+          type: 'add_watchlist',
+          data: { symbol, userId: user.id },
+          endpoint: '/api/profile',
+          method: 'PUT'
+        });
+        
+        // Add to local state immediately
+        const newItem: WatchlistItem = {
+          symbol,
+          name: symbol,
+          price: 0,
+          change: 0,
+          changePercent: 0,
+          alertEnabled: false,
+          alertThreshold: 5
+        };
+        setWatchlistItems(prev => [...prev, newItem]);
       }
+
+      setShowAddModal(false);
+      setSearchQuery('');
+      setSearchResults([]);
+      
     } catch (error) {
       console.error('Error adding to watchlist:', error);
     }
@@ -178,38 +307,102 @@ export default function WatchlistManager() {
   const removeFromWatchlist = async (symbol: string) => {
     if (!user) return;
 
-    const updatedWatchlist = user.preferences.watchlist.filter(s => s !== symbol);
-    
     try {
-      const result = await updateProfile({
-        preferences: {
-          ...user.preferences,
-          watchlist: updatedWatchlist
-        }
-      });
+      // Remove from IndexedDB immediately
+      await dbManager.removeFromWatchlist(symbol);
+      
+      // Update local state immediately
+      setWatchlistItems(prev => prev.filter(item => item.symbol !== symbol));
 
-      if (result.success) {
-        setWatchlistItems(prev => prev.filter(item => item.symbol !== symbol));
+      // If online, update server
+      if (!isOffline) {
+        const updatedWatchlist = user.preferences.watchlist.filter(s => s !== symbol);
+        
+        const result = await updateProfile({
+          preferences: {
+            ...user.preferences,
+            watchlist: updatedWatchlist
+          }
+        });
+
+        if (!result.success) {
+          // If server update fails, queue for later sync
+          await dbManager.queueOfflineAction({
+            type: 'remove_watchlist',
+            data: { symbol, userId: user.id },
+            endpoint: '/api/profile',
+            method: 'PUT'
+          });
+        }
+      } else {
+        // When offline, queue the action for later sync
+        await dbManager.queueOfflineAction({
+          type: 'remove_watchlist',
+          data: { symbol, userId: user.id },
+          endpoint: '/api/profile',
+          method: 'PUT'
+        });
       }
+      
     } catch (error) {
       console.error('Error removing from watchlist:', error);
     }
   };
 
-  const toggleAlert = (symbol: string) => {
-    setWatchlistItems(prev => prev.map(item => 
+  const toggleAlert = async (symbol: string) => {
+    const updatedItems = watchlistItems.map(item => 
       item.symbol === symbol 
         ? { ...item, alertEnabled: !item.alertEnabled }
         : item
-    ));
+    );
+    
+    setWatchlistItems(updatedItems);
+    
+    // Save to IndexedDB
+    try {
+      const updatedItem = updatedItems.find(item => item.symbol === symbol);
+      if (updatedItem && user) {
+        await dbManager.addToWatchlist({
+          symbol,
+          userId: user.id,
+          name: updatedItem.name,
+          price: updatedItem.price,
+          change: updatedItem.change,
+          dateAdded: new Date().toISOString(),
+          notes: `Alert ${updatedItem.alertEnabled ? 'enabled' : 'disabled'}`
+        });
+      }
+    } catch (error) {
+      console.error('Error saving alert toggle:', error);
+    }
   };
 
-  const updateAlertThreshold = (symbol: string, threshold: number) => {
-    setWatchlistItems(prev => prev.map(item => 
+  const updateAlertThreshold = async (symbol: string, threshold: number) => {
+    const updatedItems = watchlistItems.map(item => 
       item.symbol === symbol 
         ? { ...item, alertThreshold: threshold }
         : item
-    ));
+    );
+    
+    setWatchlistItems(updatedItems);
+    
+    // Save to IndexedDB
+    try {
+      const updatedItem = updatedItems.find(item => item.symbol === symbol);
+      if (updatedItem && user) {
+        await dbManager.addToWatchlist({
+          symbol,
+          userId: user.id,
+          name: updatedItem.name,
+          price: updatedItem.price,
+          change: updatedItem.change,
+          dateAdded: new Date().toISOString(),
+          notes: `Alert threshold set to ${threshold}%`
+        });
+      }
+    } catch (error) {
+      console.error('Error saving alert threshold:', error);
+    }
   };
 
   if (!user) {
@@ -231,13 +424,31 @@ export default function WatchlistManager() {
           <p className="text-gray-400">Track your favorite stocks and politicians</p>
         </div>
         <div className="flex items-center space-x-4">
-          <div className={`px-3 py-1 rounded-full text-sm ${
-            connectionState === 'connected' 
+          {/* Offline/Online Status */}
+          <div className={`px-3 py-1 rounded-full text-sm flex items-center space-x-2 ${
+            isOffline
+              ? 'bg-orange-900 text-orange-300' 
+              : connectionState === 'connected' 
               ? 'bg-green-900 text-green-300' 
               : 'bg-red-900 text-red-300'
           }`}>
-            {connectionState === 'connected' ? 'Live' : 'Offline'}
+            <div className={`w-2 h-2 rounded-full ${
+              isOffline 
+                ? 'bg-orange-400' 
+                : connectionState === 'connected' 
+                ? 'bg-green-400' 
+                : 'bg-red-400'
+            }`}></div>
+            <span>
+              {isOffline 
+                ? 'Offline Mode' 
+                : connectionState === 'connected' 
+                ? 'Live' 
+                : 'Connecting...'
+              }
+            </span>
           </div>
+          
           <button
             onClick={() => setShowAddModal(true)}
             className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg transition-colors"
